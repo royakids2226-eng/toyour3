@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
+import BulkProductsUpload from "@/app/components/BulkProductsUpload";
 
 export default function ProductsManagement() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function ProductsManagement() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false); // ✅ إضافة هذا السطر
   const [editingProduct, setEditingProduct] = useState(null);
 
   // بيانات المنتج الجديد
@@ -176,12 +178,20 @@ export default function ProductsManagement() {
                 إضافة، تعديل وحذف منتجات المتجر
               </p>
             </div>
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-            >
-              + إضافة منتج جديد
-            </button>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                + إضافة منتج جديد
+              </button>
+              <button
+                onClick={() => setShowBulkUpload(true)}
+                className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-2"
+              >
+                📊 إضافة منتجات متعددة
+              </button>
+            </div>
           </div>
         </div>
 
@@ -320,6 +330,22 @@ export default function ProductsManagement() {
               </tbody>
             </table>
           </div>
+
+          {filteredProducts.length === 0 && (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-2xl">📦</span>
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                لا توجد منتجات
+              </h3>
+              <p className="text-gray-600">
+                {searchTerm
+                  ? "لم يتم العثور على منتجات تطابق البحث"
+                  : "لم يتم إضافة أي منتجات بعد"}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* نموذج إضافة/تعديل المنتج */}
@@ -544,6 +570,17 @@ export default function ProductsManagement() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* نافذة إضافة المنتجات المتعددة */}
+        {showBulkUpload && (
+          <BulkProductsUpload
+            onClose={() => setShowBulkUpload(false)}
+            onSuccess={() => {
+              fetchProducts();
+              setShowBulkUpload(false);
+            }}
+          />
         )}
       </div>
     </div>

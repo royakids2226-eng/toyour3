@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react"; // ✅ إضافة هذا السطر
+import React from "react";
 import Header from "./components/Header";
 import ProductCard from "./components/ProductCard";
 import Footer from "./components/Footer";
@@ -145,7 +145,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ✅ قسم التصنيف مع تحسين الأداء */}
+      {/* ✅ قسم التصنيف مع تحسين الأداء - محدث */}
       {displayCategories.length > 0 && (
         <CategoriesSection categories={displayCategories} />
       )}
@@ -193,7 +193,7 @@ export default function Home() {
   );
 }
 
-// ✅ فصل مكون التصنيفات لتحسين الأداء
+// ✅ فصل مكون التصنيفات لتحسين الأداء - محدث
 const CategoriesSection = ({ categories }) => (
   <section className="py-16 bg-[#fdf6f8]">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -210,37 +210,53 @@ const CategoriesSection = ({ categories }) => (
   </section>
 );
 
-// ✅ مكون بطاقة التصنيف المنفصل
+// ✅ مكون بطاقة التصنيف المنفصل - محدث بشكل كامل
 const CategoryCard = React.memo(({ category, index }) => (
-  <Link href={`/categories/${category.id}`} className="group text-center">
+  <Link href={`/categories/${category.id}`} className="group text-center block">
     <div
-      className="bg-white rounded-[60px_20px_60px_20px] p-3 shadow-lg w-40 h-48 md:w-64 md:h-72 flex flex-col justify-end items-center overflow-visible transition-all duration-300 group-hover:shadow-xl group-hover:scale-105 relative"
+      className="bg-white rounded-[60px_20px_60px_20px] p-4 shadow-lg w-40 h-48 md:w-64 md:h-72 flex flex-col justify-end items-center overflow-hidden transition-all duration-300 group-hover:shadow-xl group-hover:scale-105 relative"
       style={{
         transform: `rotate(${index % 2 === 0 ? "-5deg" : "-5deg"})`,
       }}
     >
+      {/* ✅ الحاوية الرئيسية للصورة - تملا المساحة بالكامل */}
       <div
-        className="absolute -top-4 md:-top-6 w-40 h-40 md:w-60 md:h-60 flex justify-center items-center transition-transform duration-300 group-hover:scale-105"
+        className="absolute inset-0 w-full h-full flex justify-center items-center transition-transform duration-300 group-hover:scale-110"
         style={{
           transform: `rotate(${index % 2 === 0 ? "5deg" : "5deg"})`,
         }}
       >
-        <img
-          src={category.image}
-          alt={category.name}
-          className="w-full h-full object-contain rounded-2xl"
-          loading="lazy"
-        />
+        {/* ✅ الصورة - تملا الحاوية بالكامل */}
+        <div className="w-full h-full relative">
+          <img
+            src={category.image}
+            alt={category.name}
+            className="w-full h-full object-cover rounded-2xl"
+            loading="lazy"
+            onError={(e) => {
+              e.currentTarget.src = "https://via.placeholder.com/300x400/EFEFEF/666666?text=No+Image";
+            }}
+          />
+          {/* ✅ طبقة تظليل للصورة لتحسين قراءة النص */}
+          <div className="absolute inset-0 bg-black opacity-20 rounded-2xl group-hover:opacity-10 transition-opacity duration-300"></div>
+        </div>
       </div>
 
+      {/* ✅ النص - يظهر فوق الصورة */}
       <div
-        className="relative z-10 w-full pt-28 md:pt-40 transition-transform duration-300 group-hover:scale-105"
+        className="relative z-10 w-full pt-32 md:pt-48 transition-transform duration-300 group-hover:scale-105"
         style={{
           transform: `rotate(${index % 2 === 0 ? "5deg" : "5deg"})`,
         }}
       >
-        <p className="text-gray-600 text-lg font-bold py-2">{category.name}</p>
+        <div className="bg-white/90 backdrop-blur-sm rounded-full mx-4 py-3 px-4 border border-white/50">
+          <p className="text-gray-800 text-lg font-bold">{category.name}</p>
+          <p className="text-gray-600 text-sm mt-1">اكتشف المزيد</p>
+        </div>
       </div>
+
+      {/* ✅ تأثير hover إضافي */}
+      <div className="absolute inset-0 rounded-2xl border-2 border-transparent group-hover:border-blue-300 transition-all duration-300"></div>
     </div>
   </Link>
 ));
