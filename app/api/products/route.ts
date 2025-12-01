@@ -7,24 +7,50 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category");
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "20");
 
-    // جلب المنتجات من قاعدة البيانات
-    const productsRaw = await prisma.products.findMany({
+    console.log("🔍 جلب المنتجات للعميل:", { category, page, limit });
+
+    // ✅ البحث عن التصنيف بالاسم إذا كان category اسم وليس ID
+    let categoryName = category;
+
+    if (category && !isNaN(parseInt(category))) {
+      // إذا كان category هو ID، البحث عن اسم التصنيف
+      const cat = await prisma.categories.findUnique({
+        where: { id: parseInt(category) },
+      });
+      if (cat) {
+        categoryName = cat.name;
+      }
+    }
+
+    console.log(`🔍 البحث عن المنتجات في تصنيف: "${categoryName}"`);
+
+    // ✅ 1. أولاً: جلب جميع المنتجات الخام مع فلترة حسب التصنيف
+    const allProductsRaw = await prisma.products.findMany({
       where: {
-        unique_id: { contains: "-0" },
         cur_qty: { gt: 0 },
-        ...(category && { group_name: { contains: category } }),
+        // ✅ فلترة حسب group_name أو kind_name أو item_name
+        ...(categoryName && {
+          OR: [
+            { group_name: { contains: categoryName, mode: "insensitive" } },
+            { kind_name: { contains: categoryName, mode: "insensitive" } },
+            { item_name: { contains: categoryName, mode: "insensitive" } },
+          ],
+        }),
       },
-      take: 50,
+      orderBy: {
+        item_name: "asc",
+      },
     });
 
-    // جلب الفئات
-    const categories = await prisma.categories.findMany();
+    console.log(`📊 جميع المنتجات الخام من DB: ${allProductsRaw.length} منتج`);
 
-    // تجميع المنتجات حسب master_code
+    // ✅ 2. تجميع المنتجات حسب master_code
     const groupedByMasterCode: { [key: string]: any } = {};
 
-    productsRaw.forEach((row) => {
+    allProductsRaw.forEach((row) => {
       const masterCode = row.master_code;
       if (!masterCode) return;
 
@@ -34,7 +60,7 @@ export async function GET(request: Request) {
       if (!groupedByMasterCode[masterCode]) {
         groupedByMasterCode[masterCode] = {
           modelId: masterCode,
-          master_code: masterCode, // إضافة master_code كحقل منفصل
+          master_code: masterCode,
           price: row.out_price || 0,
           category: row.group_name || "",
           description: row.item_name || row.kind_name || "منتج بدون وصف",
@@ -70,42 +96,59 @@ export async function GET(request: Request) {
       }
     });
 
-    const finalProducts = Object.values(groupedByMasterCode).filter(
+    // ✅ 3. تحويل إلى مصفوفة وفلترة المنتجات التي لديها variants
+    const allGroupedProducts = Object.values(groupedByMasterCode).filter(
       (product) => product.variants.length > 0
     );
 
+    console.log(`🎯 المنتجات بعد التجميع: ${allGroupedProducts.length} موديل`);
+
+    // ✅ 4. حساب الترقيم على الموديلات المجمعة
+    const totalProducts = allGroupedProducts.length;
+    const totalPages = Math.ceil(totalProducts / limit);
+    const skip = (page - 1) * limit;
+
+    // ✅ 5. أخذ الجزء المطلوب فقط للصفحة الحالية
+    const paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
+
+    console.log(
+      `📄 الترقيم: صفحة ${page} من ${totalPages}, عرض ${paginatedProducts.length} موديل`
+    );
+
+    // ✅ 6. جلب الفئات
+    const categories = await prisma.categories.findMany();
+
+    // ✅ 7. إحصائيات الترقيم
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
     return NextResponse.json({
-      products: finalProducts,
+      products: paginatedProducts,
       categories: categories,
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        totalProducts: totalProducts,
+        limit: limit,
+        hasNextPage: hasNextPage,
+        hasPrevPage: hasPrevPage,
+      },
     });
   } catch (error) {
     console.error("Error in products API:", error);
 
-    const fallbackProducts = [
-      {
-        modelId: "fallback-1",
-        master_code: "FB001",
-        price: 199,
-        category: "إلكترونيات",
-        description: "منتج تجريبي - سماعات رأس",
-        group_name: "إلكترونيات",
-        kind_name: "سماعات",
-        variants: [
-          {
-            id: "var-fb-1",
-            color: "أسود",
-            imageUrl:
-              "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500",
-            sizes: ["ONE SIZE"],
-          },
-        ],
-      },
-    ];
-
     return NextResponse.json({
-      products: fallbackProducts,
-      categories: [{ id: 1, name: "إلكترونيات" }],
-      error: "جاري تحميل البيانات الحقيقية قريباً",
+      products: [],
+      categories: [],
+      pagination: {
+        currentPage: 1,
+        totalPages: 1,
+        totalProducts: 0,
+        limit: 20,
+        hasNextPage: false,
+        hasPrevPage: false,
+      },
+      error: "حدث خطأ في تحميل البيانات",
     });
   }
 }

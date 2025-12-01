@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import Header from "../../components/Header";
 import ProductCard from "../../components/ProductCard";
-import { useProducts } from "../../../context/ProductsContext";
+import Pagination from "../../components/Pagination";
 
 interface Product {
   modelId: string;
@@ -26,153 +26,159 @@ interface Category {
   id: number;
   name: string;
   image: string;
-  kind: string;
-  sub?: string;
+}
+
+interface PaginationInfo {
+  currentPage: number;
+  totalPages: number;
+  totalProducts: number;
+  limit: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
 export default function CategoryDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string }; // ✅ هذا مهم - اسمه id وليس categoryId
 }) {
-  // استخدام use() لتفكيك الـ Promise
-  const { id } = use(params);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [category, setCategory] = useState<Category | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const { products, categories, searchTerm, loading, error } = useProducts();
+  const [pagination, setPagination] = useState<PaginationInfo>({
+    currentPage: 1,
+    totalPages: 1,
+    totalProducts: 0,
+    limit: 20,
+    hasNextPage: false,
+    hasPrevPage: false,
+  });
 
-  const [categoryProducts, setCategoryProducts] = useState<Product[]>([]);
-  const [currentCategory, setCurrentCategory] = useState<Category | null>(null);
-  const [subCategories, setSubCategories] = useState<Category[]>([]);
-  const [selectedSubCategory, setSelectedSubCategory] = useState<string | null>(
-    null
-  );
+  // ✅ التحقق من حالة المستخدم
+  const checkUserType = () => {
+    try {
+      const employee = localStorage.getItem("employee");
+      const employeeToken = localStorage.getItem("employeeToken");
+      return !!(employee && employeeToken);
+    } catch (error) {
+      return false;
+    }
+  };
 
-  // البحث عن التصنيف الحالي والـ Sub Categories
-  useEffect(() => {
-    if (categories.length > 0 && id) {
-      const category = categories.find((cat) => cat.id.toString() === id);
-      setCurrentCategory(category || null);
+  // ✅ جلب بيانات التصنيف بالاسم
+  const fetchCategoryName = async () => {
+    try {
+      console.log(`🔍 جلب اسم التصنيف للـ ID: ${params.id}`);
 
-      // البحث عن الـ Sub Categories المرتبطة
-      if (category) {
-        const subs = categories.filter(
-          (cat) => (cat as any).sub === category.name && cat.image // فقط اللي لها صور
+      // ✅ محاولة جلب التصنيف من الـ API
+      const response = await fetch(`/api/categories/${params.id}`);
+      if (response.ok) {
+        const categoryData = await response.json();
+        console.log(`✅ وجدت التصنيف:`, categoryData);
+        setCategory(categoryData);
+        return categoryData.name;
+      }
+
+      // ✅ إذا فشل، جرب الـ API الآخر
+      const response2 = await fetch("/api/categories");
+      if (response2.ok) {
+        const categories = await response2.json();
+        const foundCategory = categories.find(
+          (cat: Category) => cat.id.toString() === params.id
         );
-        setSubCategories(subs);
+        if (foundCategory) {
+          console.log(`✅ وجدت التصنيف من القائمة:`, foundCategory);
+          setCategory(foundCategory);
+          return foundCategory.name;
+        }
       }
+
+      console.log(`❌ لم أجد التصنيف للـ ID: ${params.id}`);
+      return null;
+    } catch (error) {
+      console.error("Error fetching category:", error);
+      return null;
     }
-  }, [categories, id]);
+  };
 
-  // فلترة المنتجات حسب التصنيف والبحث والـ Sub Category
-  useEffect(() => {
-    console.log(
-      "🔄 فلترة المنتجات - البحث:",
-      searchTerm,
-      "التصنيف:",
-      id,
-      "Sub:",
-      selectedSubCategory
-    );
+  // ✅ جلب المنتجات
+  const fetchProducts = async (page = 1, limit = 20) => {
+    try {
+      setLoading(true);
+      const isEmployee = checkUserType();
 
-    if (products.length > 0 && categories.length > 0) {
-      const category = categories.find((cat) => cat.id.toString() === id);
-      console.log("📊 التصنيف الموجود:", category);
+      // ✅ جلب اسم التصنيف أولاً
+      const categoryName = await fetchCategoryName();
 
-      if (category) {
-        let filtered = products.filter((product) => {
-          // أولاً: فلترة حسب التصنيف
-          const categoryName = category.name.toLowerCase();
-          const categoryFields = [
-            product.category,
-            product.group_name,
-            product.kind_name,
-            product.item_name,
-          ]
-            .filter(Boolean)
-            .map((field) => field?.toLowerCase());
+      console.log(`📢 اسم التصنيف المستخدم للبحث: "${categoryName}"`);
 
-          const matchesCategory = categoryFields.some((field) =>
-            field?.includes(categoryName)
-          );
-          if (!matchesCategory) {
-            console.log("❌ المنتج مش من التصنيف:", product.description);
-            return false;
-          }
+      // ✅ بناء URL مع أو بدون تصنيف
+      const endpoint = isEmployee ? "/api/products/employee" : "/api/products";
+      let url = `${endpoint}?page=${page}&limit=${limit}`;
 
-          // ثانياً: فلترة حسب الـ Sub Category إذا كان محدد
-          if (selectedSubCategory) {
-            const subCategoryFields = [
-              product.description,
-              product.category,
-              product.group_name,
-              product.kind_name,
-              product.item_name,
-            ]
-              .filter(Boolean)
-              .map((field) => field?.toLowerCase());
-
-            const matchesSubCategory = subCategoryFields.some((field) =>
-              field?.includes(selectedSubCategory.toLowerCase())
-            );
-            if (!matchesSubCategory) {
-              console.log(
-                "❌ المنتج مش من الـ Sub Category:",
-                product.description
-              );
-              return false;
-            }
-          }
-
-          // ثالثاً: فلترة حسب البحث إذا كان موجود
-          if (searchTerm.trim() !== "") {
-            const searchFields = [
-              product.description,
-              product.category,
-              product.group_name,
-              product.kind_name,
-              product.item_name,
-              product.master_code,
-              ...product.variants.map((v) => v.color),
-            ]
-              .filter(Boolean)
-              .map((field) => field?.toLowerCase());
-
-            const matchesSearch = searchFields.some((field) =>
-              field?.includes(searchTerm.toLowerCase())
-            );
-            if (!matchesSearch) {
-              console.log("❌ المنتج مش مطابق للبحث:", product.description);
-              return false;
-            }
-            console.log("✅ المنتج مطابق للبحث:", product.description);
-          }
-
-          return true;
-        });
-
-        console.log("🎯 عدد المنتجات بعد الفلترة:", filtered.length);
-        setCategoryProducts(filtered);
+      if (categoryName) {
+        url += `&category=${encodeURIComponent(categoryName)}`;
+        console.log(`🌐 جلب المنتجات للتصنيف: ${url}`);
       } else {
-        console.log("❌ التصنيف مش موجود");
-        setCategoryProducts([]);
+        console.log(`🌐 جلب جميع المنتجات (بدون تصنيف): ${url}`);
       }
-    }
-  }, [products, categories, id, searchTerm, selectedSubCategory]);
 
-  const handleSubCategoryClick = (subCategoryName: string) => {
-    setSelectedSubCategory(
-      selectedSubCategory === subCategoryName ? null : subCategoryName
-    );
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error("فشل في جلب البيانات");
+      }
+
+      const data = await response.json();
+
+      console.log(`📦 البيانات المستلمة: ${data.products?.length || 0} منتج`);
+      console.log(`📊 معلومات الترقيم:`, data.pination);
+
+      setProducts(data.products || []);
+
+      // ✅ حفظ معلومات الترقيم
+      if (data.pagination) {
+        setPagination(data.pagination);
+      }
+    } catch (err) {
+      console.error("Error:", err);
+      setError("حدث خطأ في تحميل البيانات");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ جلب البيانات أول مرة
+  useEffect(() => {
+    fetchProducts();
+  }, [params.id]);
+
+  // ✅ دالة تغيير الصفحة
+  const handlePageChange = (page: number) => {
+    console.log(`🔄 تغيير الصفحة إلى: ${page}`);
+    fetchProducts(page, pagination.limit);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // ✅ دالة تغيير عدد المنتجات في الصفحة
+  const handleLimitChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const newLimit = parseInt(event.target.value);
+    console.log(`🔄 تغيير عدد المنتجات في الصفحة إلى: ${newLimit}`);
+    fetchProducts(1, newLimit);
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
-        <div className="flex justify-center items-center h-64">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">جاري تحميل المنتجات...</p>
+        <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-center items-center h-64">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+              <p className="mt-4 text-gray-600">جاري تحميل المنتجات...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -183,165 +189,161 @@ export default function CategoryDetailPage({
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
-        <div className="flex justify-center items-center h-64">
-          <div className="text-center">
-            <p className="text-red-600">{error}</p>
+        <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-center items-center h-64">
+            <div className="text-center">
+              <p className="text-red-600 mb-4">{error}</p>
+              <button
+                onClick={() => fetchProducts()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              >
+                حاول مرة أخرى
+              </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  const category = categories.find((cat) => cat.id.toString() === id);
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
 
-      <main className="max-w-7xl mx-auto py-4 sm:py-8 px-3 sm:px-6 lg:px-8">
-        {/* زر العودة */}
-        <button
-          onClick={() => window.history.back()}
-          className="flex items-center text-gray-600 hover:text-gray-900 mb-4 text-sm sm:text-base"
-        >
-          <svg
-            className="w-4 h-4 sm:w-5 sm:h-5 ml-1"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
-            />
-          </svg>
-          العودة
-        </button>
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        {/* رأس الصفحة */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            {category?.name || `التصنيف ${params.id}`}
+          </h1>
 
-        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-4 sm:mb-6 text-center">
-          {category?.name || `التصنيف ${id}`}
-        </h1>
+          <div className="flex justify-between items-center mb-4">
+            <p className="text-gray-600">
+              {products.length > 0
+                ? `عرض ${Math.min(
+                    (pagination.currentPage - 1) * pagination.limit + 1,
+                    pagination.totalProducts
+                  )} - ${Math.min(
+                    pagination.currentPage * pagination.limit,
+                    pagination.totalProducts
+                  )} من ${pagination.totalProducts} منتج`
+                : "لا توجد منتجات في هذا التصنيف"}
+            </p>
 
-        {/* ✅ صور دائرية للـ Sub Categories - تصميم متجاوب */}
-        {subCategories.length > 0 && (
-          <section className="bg-white rounded-xl sm:rounded-lg shadow-sm p-4 sm:p-6 mb-4 sm:mb-6">
-            <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-gray-900 mb-3 sm:mb-4 text-center">
-              التصنيفات الفرعية
-            </h2>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-sm px-3 py-1 rounded-full ${
+                  checkUserType()
+                    ? "bg-blue-100 text-blue-800"
+                    : "bg-green-100 text-green-800"
+                }`}
+              >
+                {checkUserType() ? "👔 موظف" : "👤 عميل"}
+              </span>
+            </div>
+          </div>
+        </div>
 
-            {/* ✅ تصميم متجاوب للشاشات الصغيرة */}
-            <div className="flex overflow-x-auto pb-3 gap-3 sm:flex-wrap sm:justify-center sm:gap-6 hide-scrollbar">
-              {subCategories.map((subCategory) => (
-                <button
-                  key={subCategory.id}
-                  onClick={() => handleSubCategoryClick(subCategory.name)}
-                  className={`flex flex-col items-center transition-all duration-300 flex-shrink-0 ${
-                    selectedSubCategory === subCategory.name
-                      ? "transform -translate-y-1 sm:-translate-y-2"
-                      : "hover:transform hover:-translate-y-1"
-                  }`}
-                >
-                  {/* ✅ الصورة الدائرية بحجم متجاوب */}
-                  <div
-                    className={`w-14 h-14 sm:w-18 sm:h-18 lg:w-20 lg:h-20 rounded-full overflow-hidden border-3 sm:border-4 transition-all duration-300 ${
-                      selectedSubCategory === subCategory.name
-                        ? "border-blue-500 shadow-lg"
-                        : "border-gray-200 hover:border-blue-300"
-                    }`}
-                  >
-                    <img
-                      src={
-                        subCategory.image ||
-                        "https://via.placeholder.com/100x100/EFEFEF/666666?text=No+Image"
-                      }
-                      alt={subCategory.name}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </div>
-
-                  {/* ✅ النص بحجم متجاوب */}
-                  <span
-                    className={`mt-1 sm:mt-2 text-xs sm:text-sm font-medium transition-colors text-center max-w-16 sm:max-w-20 lg:max-w-none ${
-                      selectedSubCategory === subCategory.name
-                        ? "text-blue-600 font-bold"
-                        : "text-gray-700 hover:text-blue-500"
-                    }`}
-                  >
-                    {subCategory.name}
-                  </span>
-                </button>
+        {/* عرض المنتجات */}
+        {products.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {products.map((product) => (
+                <ProductCard key={product.modelId} product={product} />
               ))}
             </div>
 
-            {/* ✅ زر إلغاء التصفية متجاوب */}
-            {selectedSubCategory && (
-              <div className="text-center mt-3 sm:mt-4">
-                <button
-                  onClick={() => setSelectedSubCategory(null)}
-                  className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-medium bg-blue-50 hover:bg-blue-100 px-3 sm:px-4 py-1 sm:py-2 rounded-full transition-colors"
-                >
-                  عرض كل منتجات {category?.name}
-                </button>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ✅ شريط المعلومات - تصميم متجاوب */}
-        <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-xs sm:text-sm text-blue-700 text-center sm:text-right">
-            <strong>معلومات البحث:</strong> عرض {categoryProducts.length} منتج
-            {searchTerm && (
-              <span className="text-green-600"> لـ "{searchTerm}"</span>
-            )}
-            {category && (
-              <span className="text-blue-600"> في "{category.name}"</span>
-            )}
-            {selectedSubCategory && (
-              <span className="text-purple-600"> - {selectedSubCategory}</span>
-            )}
-          </p>
-        </div>
-
-        {/* ✅ شبكة المنتجات - تصميم متجاوب */}
-        {categoryProducts.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
-            {categoryProducts.map((product) => (
-              <ProductCard key={product.modelId} product={product} />
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8 sm:py-12">
-            <div className="text-gray-400 text-4xl sm:text-6xl mb-3 sm:mb-4">
-              📦
+            {/* الترقيم */}
+            <div className="mt-8">
+              {pagination.totalPages > 1 ? (
+                <Pagination
+                  currentPage={pagination.currentPage}
+                  totalPages={pagination.totalPages}
+                  totalProducts={pagination.totalProducts}
+                  limit={pagination.limit}
+                  hasNextPage={pagination.hasNextPage}
+                  hasPrevPage={pagination.hasPrevPage}
+                  onPageChange={handlePageChange}
+                />
+              ) : (
+                <div className="bg-white p-4 rounded-lg border border-gray-200 text-center">
+                  <p className="text-gray-600">
+                    صفحة {pagination.currentPage} من {pagination.totalPages} •
+                    {pagination.totalProducts} منتج
+                  </p>
+                </div>
+              )}
             </div>
-            <h3 className="text-base sm:text-lg lg:text-xl font-medium text-gray-900 mb-2">
+          </>
+        ) : (
+          <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="text-gray-400 text-6xl mb-4">📦</div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
               لا توجد منتجات
             </h3>
-            <p className="text-gray-600 text-sm sm:text-base">
+            <p className="text-gray-600 mb-4">
               {category
                 ? `لا توجد منتجات في تصنيف "${category.name}"`
                 : "التصنيف غير موجود"}
-              {selectedSubCategory && ` في "${selectedSubCategory}"`}
-              {searchTerm && ` تطابق "${searchTerm}"`}
             </p>
+            <button
+              onClick={() => window.history.back()}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              العودة
+            </button>
           </div>
         )}
-      </main>
 
-      {/* ✅ إضافة CSS للـ scrollbar */}
-      <style jsx>{`
-        .hide-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
+        {/* معلومات للتصحيح */}
+        <div className="mt-8 pt-6 border-t border-gray-200 text-sm text-gray-500">
+          <div className="mb-2">
+            <p>
+              <strong>معلومات التصحيح:</strong>
+            </p>
+            <p>المسار: /categories/{params.id}</p>
+            <p>
+              التصنيف: {category?.name || "غير معروف"} (ID: {params.id})
+            </p>
+            <p>
+              الترقيم: {pagination.currentPage}/{pagination.totalPages} صفحات
+            </p>
+            <p>
+              المنتجات: {products.length} من أصل {pagination.totalProducts}
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                console.log("📋 معلومات كاملة:", {
+                  params,
+                  category,
+                  products,
+                  pagination,
+                });
+                alert(
+                  `معلومات:\nالتصنيف: ${
+                    category?.name || params.id
+                  }\nالصفحات: ${pagination.currentPage}/${
+                    pagination.totalPages
+                  }\nالمنتجات: ${pagination.totalProducts}`
+                );
+              }}
+              className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs"
+            >
+              عرض التفاصيل
+            </button>
+
+            <button
+              onClick={() => fetchProducts()}
+              className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-xs"
+            >
+              تحديث
+            </button>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
