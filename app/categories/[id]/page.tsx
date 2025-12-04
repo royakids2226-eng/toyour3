@@ -64,6 +64,7 @@ export default function CategoryDetailPage({
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isEmployee, setIsEmployee] = useState<boolean>(false);
 
   const [pagination, setPagination] = useState<PaginationInfo>({
     currentPage: 1,
@@ -74,28 +75,45 @@ export default function CategoryDetailPage({
     hasPrevPage: false,
   });
 
-  // ✅ التحقق من حالة المستخدم
-  const checkUserType = () => {
-    try {
-      const employee = localStorage.getItem("employee");
-      const employeeToken = localStorage.getItem("employeeToken");
-      return !!(employee && employeeToken);
-    } catch (error) {
-      return false;
-    }
-  };
+  // ✅ التحقق من حالة المستخدم مرة واحدة فقط
+  useEffect(() => {
+    const checkUserType = () => {
+      try {
+        const employee = localStorage.getItem("employee");
+        const employeeToken = localStorage.getItem("employeeToken");
+        const isEmp = !!(employee && employeeToken);
+        setIsEmployee(isEmp);
+        return isEmp;
+      } catch (error) {
+        setIsEmployee(false);
+        return false;
+      }
+    };
 
-  // ✅ دالة واحدة لجلب كل المنتجات بغض النظر عن نوع المستخدم
+    checkUserType();
+  }, []);
+
+  // ✅ دالة محسنة لجلب البيانات مع معالجة الأخطاء
   const fetchAllProducts = async () => {
     try {
       setLoading(true);
-      const isEmployee = checkUserType();
+      setError(null);
 
-      console.log(`👤 نوع المستخدم: ${isEmployee ? "موظف" : "عميل"}`);
-      console.log("📥 جلب جميع المنتجات بدون قيود...");
+      console.log(
+        `👤 نوع المستخدم في التصنيف: ${isEmployee ? "موظف" : "عميل"}`
+      );
+      console.log(`📥 جلب تصنيف ID: ${id}`);
 
-      // ✅ استخدم نفس الـ API للجميع مع معامل لتحديد نوع العرض
-      const response = await fetch("/api/getAllData");
+      // ✅ استدعاء واحد فقط لجميع البيانات مع معلمات التحكم
+      const response = await fetch(`/api/getAllData?categoryId=${id}`, {
+        method: "GET",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+        // إضافة timeout للاستدعاء
+        signal: AbortSignal.timeout(30000), // 30 ثانية
+      });
 
       if (!response.ok) {
         throw new Error(`خطأ في جلب البيانات: ${response.status}`);
@@ -105,48 +123,87 @@ export default function CategoryDetailPage({
       let productsList: Product[] = data.products || [];
       const categoriesList: Category[] = data.categories || [];
 
-      console.log(`📦 المنتجات الأساسية: ${productsList.length} منتج`);
+      console.log(`📦 المنتجات المسترجعة: ${productsList.length} منتج`);
+      console.log(`📁 التصنيفات المسترجعة: ${categoriesList.length} تصنيف`);
 
-      // ✅ إذا كان المستخدم موظفاً، فلترنا فقط المنتجات المتوفرة في المخزن الرئيسي
-      if (isEmployee) {
-        console.log("🔍 فلترة المنتجات للموظف (المخزن الرئيسي فقط)...");
+      // ✅ فلترة المنتجات حسب التصنيف الحالي أولاً
+      if (id && categoriesList.length > 0) {
+        const category = categoriesList.find(
+          (cat: Category) => cat.id.toString() === id
+        );
+        setCurrentCategory(category || null);
 
-        // جلب بيانات المنتجات للموظفين (كميات المخزن)
+        if (category) {
+          // تصفية المنتجات حسب التصنيف فقط
+          const categoryName = category.name.toLowerCase();
+          const filteredProducts = productsList.filter((product) => {
+            const categoryFields = [
+              product.category,
+              product.group_name,
+              product.kind_name,
+              product.item_name,
+            ]
+              .filter(Boolean)
+              .map((field) => field?.toLowerCase());
+
+            return categoryFields.some((field) =>
+              field?.includes(categoryName)
+            );
+          });
+
+          productsList = filteredProducts;
+          console.log(
+            `🎯 المنتجات بعد فلترة التصنيف: ${productsList.length} منتج`
+          );
+
+          // جلب التصنيفات الفرعية
+          const subs = categoriesList.filter(
+            (cat: Category) => cat.sub === category.name && cat.image
+          );
+          setSubCategories(subs);
+          console.log(`🔍 التصنيفات الفرعية: ${subs.length} تصنيف`);
+        }
+      }
+
+      // ✅ للموظفين: جلب الكميات بشكل منفصل لتجنب التعقيد
+      if (isEmployee && productsList.length > 0) {
+        console.log("🔍 جلب كميات الموظف...");
         try {
-          const employeeResponse = await fetch("/api/products/employee");
+          // استدعاء مبسط للكميات - جلب فقط IDs المطلوبة
+          const productIds = productsList
+            .slice(0, 100)
+            .map((p) => p.modelId)
+            .join(",");
+          const employeeResponse = await fetch(
+            `/api/products/employee?ids=${productIds}&limit=100`,
+            {
+              headers: {
+                "Cache-Control": "no-cache",
+              },
+            }
+          );
+
           if (employeeResponse.ok) {
             const employeeData = await employeeResponse.json();
             const employeeProducts: Product[] = employeeData.products || [];
             console.log(
-              `🏪 منتجات الموظف (بكميات): ${employeeProducts.length} منتج`
+              `🏪 كميات الموظف المسترجعة: ${employeeProducts.length} منتج`
             );
 
             // إنشاء خريطة للكميات
             const quantityMap = new Map();
             employeeProducts.forEach((product: Product) => {
               product.variants?.forEach((variant) => {
-                // تخزين كمية اللون الإجمالية
                 if (variant.cur_qty !== undefined) {
                   quantityMap.set(
                     `${product.modelId}-${variant.color}`,
                     variant.cur_qty
                   );
                 }
-                // تخزين كميات المقاسات إذا وجدت
-                if (variant.sizeQuantities) {
-                  Object.entries(variant.sizeQuantities).forEach(
-                    ([size, qty]) => {
-                      quantityMap.set(
-                        `${product.modelId}-${variant.color}-${size}`,
-                        qty
-                      );
-                    }
-                  );
-                }
               });
             });
 
-            // إضافة الكميات للمنتجات الأساسية
+            // تحديث كميات المنتجات المفلترة فقط
             productsList = productsList.map((product) => {
               const updatedProduct = { ...product };
               updatedProduct.variants =
@@ -172,42 +229,38 @@ export default function CategoryDetailPage({
         }
       }
 
-      console.log(`📊 إجمالي المنتجات بعد المعالجة: ${productsList.length}`);
-      console.log(`📁 إجمالي التصنيفات: ${categoriesList.length}`);
-
       // ✅ حفظ البيانات
       setAllProducts(productsList);
       setCategories(categoriesList);
-
-      // ✅ جلب التصنيف الحالي
-      if (categoriesList && id) {
-        const category = categoriesList.find(
-          (cat: Category) => cat.id.toString() === id
-        );
-        setCurrentCategory(category || null);
-
-        if (category) {
-          const subs = categoriesList.filter(
-            (cat: Category) => cat.sub === category.name && cat.image
-          );
-          setSubCategories(subs);
-          console.log(`🔍 التصنيفات الفرعية: ${subs.length} تصنيف`);
-        }
-      }
     } catch (err: any) {
       console.error("❌ Error fetching products:", err);
-      setError(`فشل في تحميل البيانات: ${err.message}`);
 
-      // ✅ محاولة استخدام API بديل
+      let errorMessage = `فشل في تحميل البيانات: ${err.message}`;
+
+      // رسائل خطأ محددة
+      if (err.name === "TimeoutError") {
+        errorMessage = "انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى.";
+      } else if (err.message.includes("429")) {
+        errorMessage =
+          "تم تجاوز عدد الطلبات المسموح بها. يرجى الانتظار قليلاً.";
+      } else if (err.message.includes("500")) {
+        errorMessage = "خطأ في الخادم. يرجى المحاولة لاحقاً.";
+      }
+
+      setError(errorMessage);
+
+      // ✅ محاولة استخدام API مبسط مع تقليل البيانات
       try {
-        console.log("🔄 محاولة استخدام API بديل...");
-        const fallbackResponse = await fetch("/api/products");
+        console.log("🔄 محاولة استخدام API مبسط...");
+        const fallbackResponse = await fetch(
+          `/api/products?category=${id}&limit=50`
+        );
         if (fallbackResponse.ok) {
           const fallbackData = await fallbackResponse.json();
           setAllProducts(fallbackData.products || []);
           setCategories(fallbackData.categories || []);
           setError(null);
-          console.log("✅ تم استرجاع البيانات باستخدام API بديل");
+          console.log("✅ تم استرجاع البيانات باستخدام API مبسط");
         }
       } catch (fallbackError) {
         console.error("❌ Fallback error:", fallbackError);
@@ -217,7 +270,7 @@ export default function CategoryDetailPage({
     }
   };
 
-  // ✅ دالة تطبيق الترقيم على المنتجات المفلترة
+  // ✅ دالة تطبيق الترقيم مع تحسين الأداء
   const applyPagination = (
     productsList: Product[],
     page: number,
@@ -233,7 +286,6 @@ export default function CategoryDetailPage({
         hasNextPage: false,
         hasPrevPage: false,
       });
-      console.log("📭 لا توجد منتجات للتطبيق");
       return;
     }
 
@@ -243,12 +295,6 @@ export default function CategoryDetailPage({
 
     const totalProducts = productsList.length;
     const totalPages = Math.ceil(totalProducts / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
-
-    console.log(
-      `📊 الترقيم: صفحة ${page}/${totalPages}, عرض ${paginated.length} منتج من أصل ${totalProducts}`
-    );
 
     setPaginatedProducts(paginated);
     setPagination({
@@ -256,49 +302,42 @@ export default function CategoryDetailPage({
       totalPages,
       totalProducts,
       limit,
-      hasNextPage,
-      hasPrevPage,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
     });
   };
 
-  // ✅ فلترة المنتجات حسب التصنيف والبحث والـ Sub Category
+  // ✅ فلترة المنتجات مع تحسين الأداء
   const filterProducts = () => {
-    if (allProducts.length === 0 || categories.length === 0) {
-      console.log("⚠️ لا توجد منتجات للفلترة");
+    if (allProducts.length === 0) {
       return [];
     }
 
-    const category = categories.find((cat) => cat.id.toString() === id);
-    if (!category) {
-      console.log("❌ التصنيف غير موجود");
-      return [];
+    let filtered = [...allProducts];
+
+    // فلترة حسب البحث
+    if (searchTerm.trim() !== "") {
+      const searchTermLower = searchTerm.toLowerCase();
+      filtered = filtered.filter((product) => {
+        const searchFields = [
+          product.description,
+          product.category,
+          product.group_name,
+          product.kind_name,
+          product.item_name,
+          product.master_code,
+        ]
+          .filter(Boolean)
+          .map((field) => field?.toLowerCase());
+
+        return searchFields.some((field) => field?.includes(searchTermLower));
+      });
     }
 
-    console.log(`🔍 فلترة المنتجات في: "${category.name}"`);
-    console.log(`🔍 البحث: "${searchTerm}"`);
-    console.log(`🔍 Sub Category: "${selectedSubCategory}"`);
-
-    const filtered = allProducts.filter((product) => {
-      // 1. فلترة حسب التصنيف الرئيسي
-      const categoryName = category.name.toLowerCase();
-      const categoryFields = [
-        product.category,
-        product.group_name,
-        product.kind_name,
-        product.item_name,
-      ]
-        .filter(Boolean)
-        .map((field) => field?.toLowerCase());
-
-      const matchesCategory = categoryFields.some((field) =>
-        field?.includes(categoryName)
-      );
-      if (!matchesCategory) {
-        return false;
-      }
-
-      // 2. فلترة حسب الـ Sub Category
-      if (selectedSubCategory) {
+    // فلترة حسب التصنيف الفرعي
+    if (selectedSubCategory) {
+      const subCategoryLower = selectedSubCategory.toLowerCase();
+      filtered = filtered.filter((product) => {
         const subCategoryFields = [
           product.description,
           product.category,
@@ -309,52 +348,23 @@ export default function CategoryDetailPage({
           .filter(Boolean)
           .map((field) => field?.toLowerCase());
 
-        const matchesSubCategory = subCategoryFields.some((field) =>
-          field?.includes(selectedSubCategory.toLowerCase())
+        return subCategoryFields.some((field) =>
+          field?.includes(subCategoryLower)
         );
-        if (!matchesSubCategory) {
-          return false;
-        }
-      }
+      });
+    }
 
-      // 3. فلترة حسب البحث
-      if (searchTerm.trim() !== "") {
-        const searchFields = [
-          product.description,
-          product.category,
-          product.group_name,
-          product.kind_name,
-          product.item_name,
-          product.master_code,
-          ...(product.variants || []).map((v) => v.color),
-        ]
-          .filter(Boolean)
-          .map((field) => field?.toLowerCase());
-
-        const matchesSearch = searchFields.some((field) =>
-          field?.includes(searchTerm.toLowerCase())
-        );
-        if (!matchesSearch) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-
-    console.log(`✅ المنتجات بعد الفلترة: ${filtered.length} منتج`);
     return filtered;
   };
 
   // ✅ جلب البيانات أول مرة
   useEffect(() => {
     fetchAllProducts();
-  }, [id]);
+  }, [id, isEmployee]);
 
-  // ✅ تطبيق الفلترة والترقيم عند تغيير أي عامل
+  // ✅ تطبيق الفلترة والترقيم
   useEffect(() => {
     if (!loading && allProducts.length > 0) {
-      console.log("🔄 تطبيق الفلترة والترقيم...");
       const filteredProducts = filterProducts();
       applyPagination(
         filteredProducts,
@@ -364,7 +374,6 @@ export default function CategoryDetailPage({
     }
   }, [
     allProducts,
-    id,
     searchTerm,
     selectedSubCategory,
     loading,
@@ -374,54 +383,34 @@ export default function CategoryDetailPage({
 
   // ✅ دالة تغيير الصفحة
   const handlePageChange = (page: number) => {
-    console.log(`🔄 تغيير الصفحة إلى: ${page}`);
     const filteredProducts = filterProducts();
-
-    setPagination((prev) => ({
-      ...prev,
-      currentPage: page,
-    }));
-
     applyPagination(filteredProducts, page, pagination.limit);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // ✅ دالة تغيير عدد المنتجات في الصفحة
   const handleLimitChange = (newLimit: number) => {
-    console.log(`🔄 تغيير عدد المنتجات في الصفحة إلى: ${newLimit}`);
-
     setPagination((prev) => ({
       ...prev,
       currentPage: 1,
       limit: newLimit,
     }));
-
-    const filteredProducts = filterProducts();
-    applyPagination(filteredProducts, 1, newLimit);
   };
 
   const handleSubCategoryClick = (subCategoryName: string) => {
     const newSelected =
       selectedSubCategory === subCategoryName ? null : subCategoryName;
 
+    setSelectedSubCategory(newSelected);
     setPagination((prev) => ({
       ...prev,
       currentPage: 1,
     }));
-
-    setSelectedSubCategory(newSelected);
-    console.log(`🎯 تصنيف فرعي: ${newSelected || "الكل"}`);
-  };
-
-  // ✅ شريط البحث
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
   };
 
   const handleClearSearch = () => {
     setSearchTerm("");
     setSelectedSubCategory(null);
-
     setPagination((prev) => ({
       ...prev,
       currentPage: 1,
@@ -437,7 +426,7 @@ export default function CategoryDetailPage({
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
               <p className="mt-4 text-gray-600">جاري تحميل جميع المنتجات...</p>
-              <p className="text-sm text-gray-500">قد يستغرق بضع ثوانٍ</p>
+              <p className="text-sm text-gray-500">التصنيف: {id}</p>
             </div>
           </div>
         </div>
@@ -465,8 +454,6 @@ export default function CategoryDetailPage({
       </div>
     );
   }
-
-  const isEmployee = checkUserType();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -505,20 +492,6 @@ export default function CategoryDetailPage({
             >
               {isEmployee ? "👔 وضع الموظف" : "👤 عميل"}
             </span>
-
-            {/* ✅ معلومات إضافية */}
-            {allProducts.length > 0 && (
-              <div className="hidden sm:flex items-center gap-2 text-xs text-gray-600">
-                <span className="bg-gray-100 px-2 py-1 rounded">
-                  {allProducts.length} منتج متاح
-                </span>
-                {isEmployee && (
-                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded">
-                    رؤية جميع المنتجات
-                  </span>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -532,255 +505,108 @@ export default function CategoryDetailPage({
               ? "عرض وتحرير المنتجات المتاحة في المخزن"
               : "تصفح أحدث المنتجات في هذا التصنيف"}
           </p>
-          {isEmployee && (
-            <div className="mt-2 text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full inline-block">
-              🔍 ترى جميع المنتجات وليس فقط المتوفرة في المخزن
-            </div>
-          )}
         </div>
 
-        {/* ✅ شريط البحث وأدوات التصفية */}
+        {/* شريط البحث */}
         <div className="mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-          <div className="flex flex-col lg:flex-row gap-4 items-center">
-            {/* شريط البحث */}
-            <div className="flex-1 w-full">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={handleSearch}
-                  placeholder="ابحث في منتجات التصنيف..."
-                  className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <div className="absolute left-4 top-1/2 transform -translate-y-1/2">
-                  <svg
-                    className="w-5 h-5 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
-                {(searchTerm || selectedSubCategory) && (
-                  <button
-                    onClick={handleClearSearch}
-                    className="absolute left-12 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 bg-white px-2"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* أدوات التصفية */}
-            <div className="flex flex-wrap gap-3 items-center">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600 whitespace-nowrap">
-                  عرض
-                </span>
-                <select
-                  onChange={(e) => handleLimitChange(parseInt(e.target.value))}
-                  value={pagination.limit}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="12">12 منتج</option>
-                  <option value="24">24 منتج</option>
-                  <option value="36">36 منتج</option>
-                  <option value="48">48 منتج</option>
-                  <option value="100">100 منتج</option>
-                </select>
-              </div>
-
-              {/* ✅ زر تحديث البيانات */}
-              <button
-                onClick={fetchAllProducts}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center gap-2"
+          <div className="relative">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="ابحث في منتجات التصنيف..."
+              className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <div className="absolute left-4 top-1/2 transform -translate-y-1/2">
+              <svg
+                className="w-5 h-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-                تحديث
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
+            {(searchTerm || selectedSubCategory) && (
+              <button
+                onClick={handleClearSearch}
+                className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                ✕ إلغاء
               </button>
-            </div>
+            )}
           </div>
-
-          {/* ✅ معلومات البحث */}
-          {(searchTerm || selectedSubCategory) && (
-            <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="flex flex-wrap items-center gap-2 text-sm text-blue-700">
-                <span className="font-medium">بحث عن:</span>
-                {searchTerm && (
-                  <span className="bg-blue-100 px-3 py-1 rounded-full">
-                    "{searchTerm}"
-                  </span>
-                )}
-                {selectedSubCategory && (
-                  <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full">
-                    {selectedSubCategory}
-                  </span>
-                )}
-                <button
-                  onClick={handleClearSearch}
-                  className="text-blue-600 hover:text-blue-800 text-xs font-medium"
-                >
-                  إلغاء الكل
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* ✅ صور دائرية للـ Sub Categories */}
+        {/* صور دائرية للـ Sub Categories */}
         {subCategories.length > 0 && (
           <section className="bg-white rounded-xl shadow-sm p-4 sm:p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold text-gray-900">
-                التصنيفات الفرعية
-              </h2>
-              <span className="text-sm text-gray-500">
-                {subCategories.length} تصنيف
-              </span>
-            </div>
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4">
+              التصنيفات الفرعية
+            </h2>
 
-            <div className="flex overflow-x-auto pb-3 gap-4 sm:flex-wrap sm:justify-center sm:gap-6 hide-scrollbar">
+            <div className="flex overflow-x-auto pb-3 gap-4">
               {subCategories.map((subCategory) => (
                 <button
                   key={subCategory.id}
                   onClick={() => handleSubCategoryClick(subCategory.name)}
-                  className={`flex flex-col items-center transition-all duration-300 flex-shrink-0 group ${
+                  className={`flex flex-col items-center flex-shrink-0 ${
                     selectedSubCategory === subCategory.name
                       ? "transform -translate-y-2"
-                      : "hover:transform hover:-translate-y-1"
+                      : ""
                   }`}
                 >
                   <div
-                    className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-4 transition-all duration-300 ${
+                    className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-4 ${
                       selectedSubCategory === subCategory.name
-                        ? "border-blue-500 shadow-lg scale-110"
-                        : "border-gray-200 group-hover:border-blue-300"
+                        ? "border-blue-500"
+                        : "border-gray-200"
                     }`}
                   >
                     <img
-                      src={
-                        subCategory.image ||
-                        "https://via.placeholder.com/100x100/EFEFEF/666666?text=No+Image"
-                      }
+                      src={subCategory.image}
                       alt={subCategory.name}
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                      loading="lazy"
+                      className="w-full h-full object-cover"
                     />
                   </div>
-
-                  <span
-                    className={`mt-2 text-sm font-medium transition-colors text-center max-w-20 sm:max-w-none ${
-                      selectedSubCategory === subCategory.name
-                        ? "text-blue-600 font-bold"
-                        : "text-gray-700 group-hover:text-blue-500"
-                    }`}
-                  >
+                  <span className="mt-2 text-sm text-center max-w-20">
                     {subCategory.name}
                   </span>
                 </button>
               ))}
             </div>
-
-            {selectedSubCategory && (
-              <div className="text-center mt-4">
-                <button
-                  onClick={() => setSelectedSubCategory(null)}
-                  className="text-blue-600 hover:text-blue-700 text-sm font-medium bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-full transition-colors inline-flex items-center gap-2"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                  إلغاء التصفية: {selectedSubCategory}
-                </button>
-              </div>
-            )}
           </section>
         )}
 
-        {/* ✅ معلومات الترقيم */}
+        {/* معلومات الترقيم */}
         <div className="mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="flex justify-between items-center">
             <div className="text-sm text-gray-700">
-              <span className="font-medium">التصنيف:</span>{" "}
-              {currentCategory?.name || id} •
-              <span className="font-medium mx-2">المنتجات:</span>{" "}
+              <span className="font-medium">المنتجات:</span>{" "}
               <span className="font-bold text-blue-600">
                 {pagination.totalProducts}
               </span>{" "}
               منتج
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-600 hidden sm:block">
-                <span className="font-medium">الصفحة</span>{" "}
-                <span className="font-bold">{pagination.currentPage}</span>{" "}
-                <span className="font-medium">من</span>{" "}
-                <span className="font-bold">{pagination.totalPages}</span>
-              </div>
-
-              {/* ✅ إحصائيات إضافية */}
-              {pagination.totalProducts > 0 && (
-                <div className="flex items-center gap-3">
-                  <div className="text-xs text-gray-500 hidden md:flex items-center gap-1">
-                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                    <span>عرض: {pagination.limit}/صفحة</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            <select
+              onChange={(e) => handleLimitChange(parseInt(e.target.value))}
+              value={pagination.limit}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="12">12 منتج/صفحة</option>
+              <option value="24">24 منتج/صفحة</option>
+              <option value="36">36 منتج/صفحة</option>
+            </select>
           </div>
-
-          {/* ✅ شريط تقدم الصفحات */}
-          {pagination.totalPages > 1 && (
-            <div className="mt-3">
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{
-                    width: `${
-                      (pagination.currentPage / pagination.totalPages) * 100
-                    }%`,
-                  }}
-                ></div>
-              </div>
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>الصفحة 1</span>
-                <span>الصفحة {pagination.totalPages}</span>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* ✅ عرض المنتجات */}
+        {/* عرض المنتجات */}
         {paginatedProducts.length > 0 ? (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -789,9 +615,9 @@ export default function CategoryDetailPage({
               ))}
             </div>
 
-            {/* ✅ مكون الترقيم */}
+            {/* مكون الترقيم */}
             {pagination.totalPages > 1 && (
-              <div className="mt-8 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+              <div className="mt-8">
                 <Pagination
                   currentPage={pagination.currentPage}
                   totalPages={pagination.totalPages}
@@ -803,69 +629,26 @@ export default function CategoryDetailPage({
                 />
               </div>
             )}
-
-            {/* ✅ معلومات إضافية */}
-            <div className="mt-6 text-center text-sm text-gray-500">
-              عرض{" "}
-              <span className="font-medium">
-                {Math.min(
-                  (pagination.currentPage - 1) * pagination.limit + 1,
-                  pagination.totalProducts
-                )}
-              </span>{" "}
-              -{" "}
-              <span className="font-medium">
-                {Math.min(
-                  pagination.currentPage * pagination.limit,
-                  pagination.totalProducts
-                )}
-              </span>{" "}
-              من {pagination.totalProducts} منتج
-            </div>
           </>
         ) : (
           <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
-            <div className="text-gray-400 text-6xl mb-4">
-              {isEmployee ? "📦" : "🔍"}
-            </div>
             <h3 className="text-xl font-medium text-gray-900 mb-2">
               لا توجد منتجات
             </h3>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              {currentCategory
-                ? `لا توجد منتجات في تصنيف "${currentCategory.name}"`
-                : "التصنيف غير موجود"}
-              {selectedSubCategory && ` تحت "${selectedSubCategory}"`}
-              {searchTerm && ` تطابق "${searchTerm}"`}
+            <p className="text-gray-600 mb-6">
+              {searchTerm
+                ? `لا توجد منتجات تطابق "${searchTerm}"`
+                : "لا توجد منتجات في هذا التصنيف"}
             </p>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <button
-                onClick={handleClearSearch}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                عرض جميع المنتجات
-              </button>
-              <button
-                onClick={fetchAllProducts}
-                className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-300 transition-colors font-medium"
-              >
-                تحديث البيانات
-              </button>
-            </div>
+            <button
+              onClick={handleClearSearch}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+            >
+              عرض جميع المنتجات
+            </button>
           </div>
         )}
       </main>
-
-      {/* ✅ CSS للـ scrollbar */}
-      <style jsx>{`
-        .hide-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
     </div>
   );
 }

@@ -55,7 +55,9 @@ export default function ProductCard({ product }: ProductCardProps) {
         }
 
         console.log(`📥 جلب كمية المنتج: ${product.modelId}`);
-        const response = await fetch("/api/products/employee");
+
+        // 🔥🔥🔥 التعديل هنا: إضافة ?limit=10000 لجلب كل المنتجات وضمان العثور على المنتج الحالي 🔥🔥🔥
+        const response = await fetch("/api/products/employee?limit=10000");
 
         if (response.ok) {
           const data = await response.json();
