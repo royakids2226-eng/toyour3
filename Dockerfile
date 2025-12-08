@@ -6,7 +6,10 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # نسخ package.json أولاً للاستفادة من caching
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json ./
+
+# نسخ pnpm-lock.yaml إذا موجود
+COPY pnpm-lock.yaml* ./
 
 # تثبيت dependencies
 RUN pnpm install --frozen-lockfile
@@ -14,8 +17,10 @@ RUN pnpm install --frozen-lockfile
 # نسخ باقي الملفات
 COPY . .
 
-# توليد Prisma client وبناء التطبيق
-RUN pnpm run prisma:generate
+# توليد Prisma client
+RUN pnpm exec prisma generate
+
+# بناء التطبيق
 RUN pnpm run build
 
 # تشغيل التطبيق
