@@ -6,10 +6,10 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # نسخ package.json أولاً للاستفادة من caching
-COPY package.json ./
+COPY package.json ../
 
 # نسخ pnpm-lock.yaml إذا موجود
-COPY pnpm-lock.yaml* ./
+COPY pnpm-lock.yaml* ../
 
 # تثبيت dependencies
 RUN pnpm install --frozen-lockfile
