@@ -1,27 +1,16 @@
+# Dockerfile بسيط للغاية
 FROM node:22-alpine
 
 WORKDIR /app
 
-# تثبيت pnpm
-RUN npm install -g pnpm
+COPY package.json package-lock.json* pnpm-lock.yaml* ./
 
-# نسخ package.json أولاً للاستفادة من caching
-COPY package.json ../
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
 
-# نسخ pnpm-lock.yaml إذا موجود
-COPY pnpm-lock.yaml* ../
-
-# تثبيت dependencies
-RUN pnpm install --frozen-lockfile
-
-# نسخ باقي الملفات
 COPY . .
 
-# توليد Prisma client
-RUN pnpm exec prisma generate
+RUN pnpm exec prisma generate && pnpm run build
 
-# بناء التطبيق
-RUN pnpm run build
+EXPOSE 3000
 
-# تشغيل التطبيق
 CMD ["pnpm", "start"]
