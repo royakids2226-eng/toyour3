@@ -54,11 +54,11 @@ model orders {
   address       String      @db.Text
   phone         String      @db.VarChar(50)
   total_price   Decimal     @db.Decimal(19, 4)
-  status        String      @default("جاري")
-  printed_by    String?     @db.VarChar(255)
-  printed_at    DateTime?
-  exported_by   String?     @db.VarChar(255)
-  exported_at   DateTime?
+  status        String      @default("جاري") // ⬅️ جديد: حالة الطلب
+  printed_by    String?     @db.VarChar(255) // ⬅️ جديد: اسم الموظف الذي طبع
+  printed_at    DateTime?   // ⬅️ جديد: وقت الطباعة
+  exported_by   String?     @db.VarChar(255) // ⬅️ جديد: اسم الموظف الذي صدر
+  exported_at   DateTime?   // ⬅️ جديد: وقت التصدير
   timestamp     DateTime    @default(now())
   order_items   order_items[]
 }
@@ -80,8 +80,8 @@ model users {
   usercode     String   @unique @db.VarChar(50)
   username     String   @db.VarChar(100)
   password     String   @db.VarChar(255)
-  phone        String?  @db.VarChar(20)
-  position     String   @db.VarChar(50) @default("عميل")
+  phone        String?  @db.VarChar(20)  // ⬅️ الحقل الجديد: رقم الهاتف
+  position     String   @db.VarChar(50) @default("عميل") // ⬅️ الحقل الجديد: المنصب/الصلاحية
   permissions  String   @db.VarChar(500)
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
@@ -89,12 +89,13 @@ model users {
   @@map("users")
 }
 
+// ✅ الجدول المعدل: معلومات الشركة
 model company_info {
   id              Int     @id @default(autoincrement())
   company_name    String  @db.VarChar(255)
   address         String? @db.Text
   logo            String? @db.Text
-  email           String? @db.VarChar(255)
+  email           String? @db.VarChar(255) // ⬅️ أضف هذا الحقل الجديد
   facebook_url    String? @db.VarChar(500)
   instagram_url   String? @db.VarChar(500)
   tiktok_url     String? @db.VarChar(500)
@@ -104,4 +105,6 @@ model company_info {
   terms_conditions String? @db.Text
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
+
+  @@map("company_info")
 }
